@@ -1,0 +1,6 @@
+ENV: "local"
+GRPC_REMOTE: "localhost:8081"
+HTTP_SERVER:
+  SERVER_ADDRESS: "localhost:8082"
+  TIMEOUT: 4s
+  IDLE_TIMEOUT: 60s
