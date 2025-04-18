@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"GrpcClientForTenderService/internal/config"
 	bidsFetch "GrpcClientForTenderService/internal/handlers/bids/fetch"
 	tenderFetch "GrpcClientForTenderService/internal/handlers/tender/fetch"
+	"GrpcClientForTenderService/internal/kafka"
 	bidsProto "GrpcClientForTenderService/internal/protos/gen/bids/fetch"
 	tenderProto "GrpcClientForTenderService/internal/protos/gen/tender/fetch"
 	"google.golang.org/grpc"
@@ -39,7 +41,8 @@ func main() {
 		grpc.WithTransportCredentials(insecure.NewCredentials()), // Для теста без TLS
 	)
 	if err != nil {
-		log.Error("Grpc to init logger", slog.Attr{Value: slog.StringValue(err.Error())})
+		log.Error("Failed to init Grpc client", slog.Attr{Value: slog.StringValue(err.Error())})
+		os.Exit(1) // nolint:gocritic
 	}
 	defer func() { _ = conn.Close() }()
 
@@ -59,7 +62,52 @@ func main() {
 	handlerTenderFetch := tenderFetch.NewHandler(log, tenderFetchService)
 	handlerTenderFetch.Register(router)
 
-	StartServerHttp(ctx, cfg, log, router)
+	// <! Kafka consumer
+	messageChan := make(chan string, 256)
+	var wg sync.WaitGroup
+
+	consumer, err := kafka.NewConsumer(
+		[]string{"localhost:29092"},
+		"model-events",
+		messageChan,
+	)
+	if err != nil {
+		log.Error("Failed to init Kafka client Kafka", slog.Attr{Value: slog.StringValue(err.Error())})
+		os.Exit(1) // nolint:gocritic
+	}
+
+	wg.Add(3)
+
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case msg := <-messageChan:
+				log.Info("Processing message", slog.String("message", msg))
+			case <-ctx.Done():
+				log.Info("Stopping message processor")
+				return
+			}
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		consumer.Start(ctx, []string{"model-events"})
+		log.Info("Kafka consumer stopped")
+	}()
+	// kafka consumer!>
+
+	go func() {
+		defer wg.Done()
+		StartServerHttp(ctx, cfg, log, router)
+	}()
+
+	<-ctx.Done()
+
+	wg.Wait()
+	close(messageChan)
+	log.Info("All service stopped")
 }
 
 func StartServerHttp(ctx context.Context, cfg *config.Config, log *slog.Logger, router http.Handler) {
