@@ -1,25 +1,31 @@
 package fetch
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 
-	"GrpcClientForTenderService/internal/protos/gen/tender/fetch"
-	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/proto"
+	"GrpcClientForTenderService/internal/gateway/types/transport"
 )
 
 type log interface {
 	Error(msg string, args ...any)
 }
 
-type Handler struct {
-	log log
-	b   fetch.TenderServiceFetchClient // TODO: Как тут избавится от этой зависимости и как делают эти клиенты
+type useCasesTenderFetch interface {
+	FetchList(ctx context.Context, serviceType string) ([]transport.Tender, error)
+	FetchListByUser(ctx context.Context, username string) ([]transport.Tender, error)
+	FetchStatus(ctx context.Context, username string, tenderId string) (string, error)
 }
 
-func NewHandler(l log, b fetch.TenderServiceFetchClient) Handler {
+type Handler struct {
+	log    log
+	tender useCasesTenderFetch
+}
+
+func NewHandler(l log, t useCasesTenderFetch) Handler {
 	return Handler{
-		l, b,
+		l, t,
 	}
 }
 
@@ -43,28 +49,28 @@ func (h *Handler) FetchList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	b, _ := h.b.FetchList(r.Context(), &fetch.RequestFetchListV1{ServiceType: rq.Get(param)})
-	marshalOptions := protojson.MarshalOptions{
-		Multiline:       true,
-		Indent:          "  ",
-		UseProtoNames:   true,
-		EmitUnpopulated: true,
-	}
-
-	jsonBytes, err := marshalOptions.Marshal(proto.Message(b))
+	tendersTransport, err := h.tender.FetchList(r.Context(), rq.Get(param))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-
-	_, err = w.Write(jsonBytes)
+	b, err := json.Marshal(tendersTransport)
+	if err != nil {
+		h.log.Error(err.Error())
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if len(tendersTransport) == 0 {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	_, err = w.Write(b)
 	if err != nil {
 		h.log.Error(err.Error())
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -73,36 +79,38 @@ func (h *Handler) FetchListByUser(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	rq := r.URL.Query()
 
+	rq := r.URL.Query()
 	param := "username"
 	if len(rq) >= 1 && rq.Get(param) == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	b, _ := h.b.FetchListByUser(r.Context(), &fetch.RequestFetchListByUserV1{Username: rq.Get(param)})
-	marshalOptions := protojson.MarshalOptions{
-		Multiline:       true,
-		Indent:          "  ",
-		UseProtoNames:   true,
-		EmitUnpopulated: true,
-	}
-
-	jsonBytes, err := marshalOptions.Marshal(proto.Message(b))
+	tenders, err := h.tender.FetchListByUser(r.Context(), rq.Get(param))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.log.Error(err.Error())
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-
-	_, err = w.Write(jsonBytes)
+	b, err := json.Marshal(tenders)
+	if err != nil {
+		h.log.Error(err.Error())
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if len(tenders) == 0 {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	_, err = w.Write(b)
 	if err != nil {
 		h.log.Error(err.Error())
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -120,27 +128,26 @@ func (h *Handler) FetchStatus(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	b, _ := h.b.FetchStatus(r.Context(), &fetch.RequestFetchStatusV1{Username: rq.Get(user), TenderId: rq.Get(tenderId)})
-	marshalOptions := protojson.MarshalOptions{
-		Multiline:       true,
-		Indent:          "  ",
-		UseProtoNames:   true,
-		EmitUnpopulated: true,
-	}
-
-	jsonBytes, err := marshalOptions.Marshal(proto.Message(b))
+	status, err := h.tender.FetchStatus(r.Context(), rq.Get(user), rq.Get(tenderId))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.log.Error(err.Error())
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	b, err := json.Marshal(status)
+	if err != nil {
+		h.log.Error(err.Error())
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 
-	_, err = w.Write(jsonBytes)
+	_, err = w.Write(b)
 	if err != nil {
 		h.log.Error(err.Error())
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+
 	w.WriteHeader(http.StatusOK)
 }

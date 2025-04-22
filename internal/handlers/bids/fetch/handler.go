@@ -1,24 +1,31 @@
 package fetch
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"regexp"
 
-	"GrpcClientForTenderService/internal/protos/gen/bids/fetch"
-	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/proto"
+	"GrpcClientForTenderService/internal/gateway/types/transport"
 )
 
 type log interface {
 	Error(msg string, args ...any)
 }
 
-type Handler struct {
-	log log
-	b   fetch.BidsServiceFetchClient // TODO: Как тут избавится от этой зависимости и как делают эти клиенты
+type useCaseBidsFetch interface {
+	FetchListByTender(ctx context.Context, username string, tenderId string) ([]transport.Bids, error)
+	FetchListByUser(ctx context.Context, username string) ([]transport.Bids, error)
+	FetchStatus(ctx context.Context, username string, bidsId string) (string, error)
+	FetchReviews(ctx context.Context, username string, tenderID string, authorUsername string, organizationID string) ([]transport.BidFeedback, error)
 }
 
-func NewHandler(l log, b fetch.BidsServiceFetchClient) Handler {
+type Handler struct {
+	log  log
+	bids useCaseBidsFetch
+}
+
+func NewHandler(l log, b useCaseBidsFetch) Handler {
 	return Handler{
 		l, b,
 	}
@@ -55,29 +62,32 @@ func (h *Handler) FetchListByTender(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	b, _ := h.b.FetchListByTender(r.Context(), &fetch.BidsRequestFetchListV1{Username: rq.Get(user), TenderID: id[1]})
-
-	marshalOptions := protojson.MarshalOptions{
-		Multiline:       true, // для красивого форматирования
-		Indent:          "  ", // отступ двумя пробелами
-		UseProtoNames:   true, // использовать оригинальные названия из .proto
-		EmitUnpopulated: true, // включать пустые поля
-	}
-
-	jsonBytes, err := marshalOptions.Marshal(proto.Message(b))
+	bids, err := h.bids.FetchListByTender(r.Context(), rq.Get(user), id[1])
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.log.Error("FetchListByTender error: " + err.Error())
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	if len(bids) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 
-	_, err = w.Write(jsonBytes)
+	b, err := json.Marshal(bids)
+	if err != nil {
+		h.log.Error(err.Error())
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	_, err = w.Write(b)
 	if err != nil {
 		h.log.Error(err.Error())
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -86,38 +96,38 @@ func (h *Handler) FetchListByUser(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-
 	rq := r.URL.Query()
 
-	user := "username"
-	if len(rq) >= 1 && rq.Get(user) == "" {
+	param := "username"
+	if len(rq) >= 1 && rq.Get(param) == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-
-	b, _ := h.b.FetchListByUser(r.Context(), &fetch.BidsRequestFetchListByUserV1{Username: rq.Get(user)})
-
-	marshalOptions := protojson.MarshalOptions{
-		Multiline:       true, // для красивого форматирования
-		Indent:          "  ", // отступ двумя пробелами
-		UseProtoNames:   true, // использовать оригинальные названия из .proto
-		EmitUnpopulated: true, // включать пустые поля
-	}
-
-	jsonBytes, err := marshalOptions.Marshal(proto.Message(b))
+	bids, err := h.bids.FetchListByUser(r.Context(), rq.Get(param))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.log.Error("FetchListByTender error: " + err.Error())
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	b, err := json.Marshal(bids)
+	if err != nil {
+		h.log.Error(err.Error())
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if len(bids) == 0 {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
 
-	_, err = w.Write(jsonBytes)
+	_, err = w.Write(b)
 	if err != nil {
 		h.log.Error(err.Error())
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -140,29 +150,28 @@ func (h *Handler) FetchStatus(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	b, _ := h.b.FetchStatus(r.Context(), &fetch.BidsRequestFetchStatusV1{Username: rq.Get(user), BidID: bidID[1]})
 
-	marshalOptions := protojson.MarshalOptions{
-		Multiline:       true, // для красивого форматирования
-		Indent:          "  ", // отступ двумя пробелами
-		UseProtoNames:   true, // использовать оригинальные названия из .proto
-		EmitUnpopulated: true, // включать пустые поля
-	}
-
-	jsonBytes, err := marshalOptions.Marshal(proto.Message(b))
+	bid, err := h.bids.FetchStatus(r.Context(), rq.Get(user), bidID[1])
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.log.Error("FetchBidsStatus error: " + err.Error())
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	b, err := json.Marshal(bid)
+	if err != nil {
+		h.log.Error(err.Error())
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 
-	_, err = w.Write(jsonBytes)
+	_, err = w.Write(b)
 	if err != nil {
 		h.log.Error(err.Error())
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -186,28 +195,27 @@ func (h *Handler) FetchReviews(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	b, _ := h.b.FetchReviews(r.Context(), &fetch.BidsRequestFetchReviewsV1{Username: rq.Get(username), TenderId: tenderID[1], OrganizationId: rq.Get(organizationID), AuthorUsername: rq.Get(authorUser)})
 
-	marshalOptions := protojson.MarshalOptions{
-		Multiline:       true, // для красивого форматирования
-		Indent:          "  ", // отступ двумя пробелами
-		UseProtoNames:   true, // использовать оригинальные названия из .proto
-		EmitUnpopulated: true, // включать пустые поля
-	}
-
-	jsonBytes, err := marshalOptions.Marshal(proto.Message(b))
+	bidFeedback, err := h.bids.FetchReviews(r.Context(), rq.Get(username), tenderID[1], rq.Get(authorUser), rq.Get(organizationID))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		h.log.Error("FetchBidsStatus error: " + err.Error())
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	b, err := json.Marshal(bidFeedback)
+	if err != nil {
+		h.log.Error(err.Error())
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 
-	_, err = w.Write(jsonBytes)
+	_, err = w.Write(b)
 	if err != nil {
 		h.log.Error(err.Error())
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+
 	w.WriteHeader(http.StatusOK)
 }

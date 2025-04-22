@@ -12,11 +12,15 @@ import (
 	"syscall"
 
 	"GrpcClientForTenderService/internal/config"
+	bidsGatewayFetch "GrpcClientForTenderService/internal/gateway/bids/fetch"
+	tenderGatewayFetch "GrpcClientForTenderService/internal/gateway/tender/fetch"
 	bidsFetch "GrpcClientForTenderService/internal/handlers/bids/fetch"
 	tenderFetch "GrpcClientForTenderService/internal/handlers/tender/fetch"
 	"GrpcClientForTenderService/internal/kafka"
 	bidsProto "GrpcClientForTenderService/internal/protos/gen/bids/fetch"
 	tenderProto "GrpcClientForTenderService/internal/protos/gen/tender/fetch"
+	bidsUseCaseFetch "GrpcClientForTenderService/internal/usecases/bids/fetch"
+	tenderUseCaseFetch "GrpcClientForTenderService/internal/usecases/tender/fetch"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -46,20 +50,41 @@ func main() {
 	}
 	defer func() { _ = conn.Close() }()
 
-	// <! Handler Bids
+	// <! ProtoService Bids
 	bidsFetchService := bidsProto.NewBidsServiceFetchClient(conn)
+	// ProtoService Bids !>
+
+	// <! ProtoService Tender
+	tenderFetchService := tenderProto.NewTenderServiceFetchClient(conn)
+	// ProtoService Tender !>
+
+	// <! Gateway tender
+	tenderFetchGateway := tenderGatewayFetch.NewGateway(log, tenderFetchService)
+	// Gateway tender  !>
+
+	// <! Gateway bids
+	bidsFetchGateway := bidsGatewayFetch.NewGateway(log, bidsFetchService)
+	// Gateway bids  !>
+
+	// <! UseCase tender
+	tenderFetchUseCase := tenderUseCaseFetch.NewService(tenderFetchGateway)
+	// Gateway tender  !>
+
+	// <! UseCase bids
+	bidsFetchUseCase := bidsUseCaseFetch.NewService(bidsFetchGateway)
+	// Gateway bids  !>
+
+	// <! Handler Bids
+	handlerBidsFetch := bidsFetch.NewHandler(log, bidsFetchUseCase)
 	// Handler Bids !>
 
 	// <! Handler Tender
-	tenderFetchService := tenderProto.NewTenderServiceFetchClient(conn)
+	handlerTenderFetch := tenderFetch.NewHandler(log, tenderFetchUseCase)
 	// Handler Tender !>
 
 	router := http.NewServeMux()
 
-	handlerBidsFetch := bidsFetch.NewHandler(log, bidsFetchService)
 	handlerBidsFetch.Register(router)
-
-	handlerTenderFetch := tenderFetch.NewHandler(log, tenderFetchService)
 	handlerTenderFetch.Register(router)
 
 	// <! Kafka consumer
@@ -92,15 +117,15 @@ func main() {
 	}()
 
 	go func() {
-		defer wg.Done()
 		consumer.Start(ctx, []string{"model-events"})
+		wg.Done()
 		log.Info("Kafka consumer stopped")
 	}()
 	// kafka consumer!>
 
 	go func() {
-		defer wg.Done()
 		StartServerHttp(ctx, cfg, log, router)
+		wg.Done()
 	}()
 
 	<-ctx.Done()
