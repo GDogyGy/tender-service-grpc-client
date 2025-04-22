@@ -54,21 +54,9 @@ func main() {
 	bidsFetchService := bidsProto.NewBidsServiceFetchClient(conn)
 	// ProtoService Bids !>
 
-	// <! ProtoService Tender
-	tenderFetchService := tenderProto.NewTenderServiceFetchClient(conn)
-	// ProtoService Tender !>
-
-	// <! Gateway tender
-	tenderFetchGateway := tenderGatewayFetch.NewGateway(log, tenderFetchService)
-	// Gateway tender  !>
-
 	// <! Gateway bids
 	bidsFetchGateway := bidsGatewayFetch.NewGateway(log, bidsFetchService)
 	// Gateway bids  !>
-
-	// <! UseCase tender
-	tenderFetchUseCase := tenderUseCaseFetch.NewService(tenderFetchGateway)
-	// Gateway tender  !>
 
 	// <! UseCase bids
 	bidsFetchUseCase := bidsUseCaseFetch.NewService(bidsFetchGateway)
@@ -77,6 +65,18 @@ func main() {
 	// <! Handler Bids
 	handlerBidsFetch := bidsFetch.NewHandler(log, bidsFetchUseCase)
 	// Handler Bids !>
+
+	// <! ProtoService Tender
+	tenderFetchService := tenderProto.NewTenderServiceFetchClient(conn)
+	// ProtoService Tender !>
+
+	// <! Gateway tender
+	tenderFetchGateway := tenderGatewayFetch.NewGateway(log, tenderFetchService)
+	// Gateway tender  !>
+
+	// <! UseCase tender
+	tenderFetchUseCase := tenderUseCaseFetch.NewService(tenderFetchGateway)
+	// Gateway tender  !>
 
 	// <! Handler Tender
 	handlerTenderFetch := tenderFetch.NewHandler(log, tenderFetchUseCase)
