@@ -1,5 +1,7 @@
 package transport
 
+import "encoding/json"
+
 type Tender struct {
 	Id          string
 	Name        string
@@ -26,4 +28,10 @@ type BidFeedback struct {
 	Description string
 	Responsible string
 	CreatedAt   string
+}
+
+type Event struct {
+	EventType string          `json:"event_type"`
+	Timestamp string          `json:"timestamp"`
+	Data      json.RawMessage `json:"data"`
 }

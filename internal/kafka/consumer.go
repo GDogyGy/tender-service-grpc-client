@@ -3,22 +3,23 @@ package kafka
 import (
 	"context"
 	"fmt"
-	"log"
-	"os"
-	"os/signal"
-	"sync"
-	"syscall"
-
 	"github.com/IBM/sarama"
+	"sync"
 )
 
-type Consumer struct {
-	client      sarama.ConsumerGroup
-	ready       chan bool
-	messageChan chan<- string
+type Log interface {
+	Error(msg string, args ...any)
+	Info(msg string, args ...any)
 }
 
-func NewConsumer(brokers []string, groupID string, messageChan chan<- string) (*Consumer, error) {
+type Consumer struct {
+	log     Log
+	client  sarama.ConsumerGroup
+	ready   chan bool
+	msgChan chan<- []byte
+}
+
+func NewConsumer(log Log, brokers []string, groupID string, msgChan chan<- []byte) (*Consumer, error) {
 	config := sarama.NewConfig()
 	config.Version = sarama.V2_5_0_0
 	config.Consumer.Offsets.Initial = sarama.OffsetOldest
@@ -32,48 +33,42 @@ func NewConsumer(brokers []string, groupID string, messageChan chan<- string) (*
 	}
 
 	return &Consumer{
-		client:      client,
-		ready:       make(chan bool),
-		messageChan: messageChan,
+		log:     log,
+		client:  client,
+		ready:   make(chan bool),
+		msgChan: msgChan,
 	}, nil
 }
 
 func (c *Consumer) Start(ctx context.Context, topics []string) {
+	const op = "kafka.consumer.Start"
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for {
-			if err := c.client.Consume(ctx, topics, c); err != nil {
-				log.Printf("Error from consumer: %v", err)
-				if ctx.Err() != nil {
-					return
-				}
-			}
-			if ctx.Err() != nil {
-				return
-			}
-			c.ready = make(chan bool)
+
+	defer func() {
+		if r := recover(); r != nil {
+			c.log.Error(fmt.Sprintf("%s: panic recovered: %v", op, r))
 		}
 	}()
 
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				if err := c.client.Consume(ctx, topics, c); err != nil {
+					c.log.Error(fmt.Sprintf("%s: %v", op, err))
+				}
+			}
+		}
+	}()
 	<-c.ready
-	log.Println("Sarama consumer up and running...")
+	c.log.Info("Kafka consumer started")
 
-	sigterm := make(chan os.Signal, 1)
-	signal.Notify(sigterm, syscall.SIGINT, syscall.SIGTERM)
-
-	select {
-	case <-ctx.Done():
-		log.Println("Terminating: context cancelled")
-	case <-sigterm:
-		log.Println("Terminating: via signal")
-	}
-
+	<-ctx.Done()
 	wg.Wait()
-	if err := c.client.Close(); err != nil {
-		log.Printf("Error closing client: %v", err)
-	}
 }
 
 func (c *Consumer) Setup(sarama.ConsumerGroupSession) error {
@@ -87,12 +82,15 @@ func (c *Consumer) Cleanup(sarama.ConsumerGroupSession) error {
 
 func (c *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	for message := range claim.Messages() {
-		log.Printf("Message claimed: value = %s, timestamp = %v, topic = %s",
-			string(message.Value), message.Timestamp, message.Topic)
 
-		c.messageChan <- string(message.Value)
+		c.msgChan <- message.Value
 
 		session.MarkMessage(message, "")
 	}
 	return nil
+}
+
+func (c *Consumer) Close() error {
+	close(c.msgChan)
+	return c.client.Close()
 }

@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 
 	"GrpcClientForTenderService/internal/config"
@@ -87,51 +86,39 @@ func main() {
 	handlerBidsFetch.Register(router)
 	handlerTenderFetch.Register(router)
 
-	// <! Kafka consumer
-	messageChan := make(chan string, 256)
-	var wg sync.WaitGroup
+	// <! Kafka consumer & router
+	kafkaRouter := kafka.NewRouterKafka(log)
+	// TODO: если тендер апрувнули то вычитать все тендер
+	kafkaRouter.RegisterHandler("tender_created", &handlerTenderFetch)
+	kafkaRouter.RegisterHandler("bids_created", &handlerBidsFetch)
+	msgChan := make(chan []byte, 1000)
 
 	consumer, err := kafka.NewConsumer(
+		log,
 		[]string{"localhost:29092"},
 		"model-events",
-		messageChan,
+		msgChan,
 	)
 	if err != nil {
 		log.Error("Failed to init Kafka client Kafka", slog.Attr{Value: slog.StringValue(err.Error())})
 		os.Exit(1) // nolint:gocritic
 	}
 
-	wg.Add(3)
-
-	go func() {
-		defer wg.Done()
-		for {
-			select {
-			case msg := <-messageChan:
-				log.Info("Processing message", slog.String("message", msg))
-			case <-ctx.Done():
-				log.Info("Stopping message processor")
-				return
-			}
-		}
-	}()
-
-	go func() {
-		consumer.Start(ctx, []string{"model-events"})
-		wg.Done()
-		log.Info("Kafka consumer stopped")
-	}()
-	// kafka consumer!>
+	kafkaManager := kafka.NewManager(
+		log,
+		consumer,
+		kafkaRouter,
+		msgChan,
+	)
+	kafkaManager.Run(ctx, []string{"model-events"})
+	// kafka consumer & router !>
 
 	go func() {
 		StartServerHttp(ctx, cfg, log, router)
-		wg.Done()
 	}()
 
 	<-ctx.Done()
 
-	wg.Wait()
-	close(messageChan)
 	log.Info("All service stopped")
 }
 

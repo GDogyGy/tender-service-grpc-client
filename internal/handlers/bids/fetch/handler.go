@@ -3,6 +3,7 @@ package fetch
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"regexp"
 
@@ -40,6 +41,17 @@ func (h *Handler) Register(router *http.ServeMux) {
 	router.HandleFunc(http.MethodGet+" /api/bids/my", h.FetchListByUser)
 	router.HandleFunc(http.MethodGet+" /api/bids/{bidID}/status", h.FetchStatus)
 	router.HandleFunc(http.MethodGet+" /api/bids/{tenderID}/reviews", h.FetchReviews)
+}
+
+func (h *Handler) HandleEvent(ctx context.Context, payload []byte) error {
+	var baseEvent transport.Event
+	_ = json.Unmarshal(payload, &baseEvent)
+
+	var bidsData transport.Bids
+	_ = json.Unmarshal(baseEvent.Data, &bidsData)
+
+	fmt.Println(" Спарсил это ", bidsData, baseEvent) // nolint:all
+	return nil
 }
 
 func (h *Handler) FetchListByTender(w http.ResponseWriter, r *http.Request) {

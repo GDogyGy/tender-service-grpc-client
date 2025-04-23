@@ -3,6 +3,7 @@ package fetch
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"GrpcClientForTenderService/internal/gateway/types/transport"
@@ -33,6 +34,20 @@ func (h *Handler) Register(router *http.ServeMux) {
 	router.HandleFunc(http.MethodGet+" /api/tenders", h.FetchList)
 	router.HandleFunc(http.MethodGet+" /api/tenders/my", h.FetchListByUser)
 	router.HandleFunc(http.MethodGet+" /api/tenders/status", h.FetchStatus)
+}
+
+func (h *Handler) HandleEvent(ctx context.Context, payload []byte) error {
+	var baseEvent transport.Event
+	_ = json.Unmarshal(payload, &baseEvent)
+
+	var tenderData transport.Tender
+	_ = json.Unmarshal(baseEvent.Data, &tenderData)
+
+	fmt.Println(" Спарсил это ", tenderData, baseEvent) // nolint:all
+
+	r, err := h.tender.FetchList(ctx, "")
+	fmt.Println(r) // nolint:all
+	return err
 }
 
 func (h *Handler) FetchList(w http.ResponseWriter, r *http.Request) {
