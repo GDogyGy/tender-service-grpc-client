@@ -1,12 +1,10 @@
 package fetch
 
 import (
+	"GrpcClientForTenderService/internal/gateway/types/transport"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
-
-	"GrpcClientForTenderService/internal/gateway/types/transport"
 )
 
 type log interface {
@@ -43,10 +41,8 @@ func (h *Handler) HandleEvent(ctx context.Context, payload []byte) error {
 	var tenderData transport.Tender
 	_ = json.Unmarshal(baseEvent.Data, &tenderData)
 
-	fmt.Println(" Спарсил это ", tenderData, baseEvent) // nolint:all
+	_, err := h.tender.FetchList(ctx, "")
 
-	r, err := h.tender.FetchList(ctx, "")
-	fmt.Println(r) // nolint:all
 	return err
 }
 

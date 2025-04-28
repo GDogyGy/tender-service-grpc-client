@@ -18,6 +18,7 @@ import (
 	"GrpcClientForTenderService/internal/kafka"
 	bidsProto "GrpcClientForTenderService/internal/protos/gen/bids/fetch"
 	tenderProto "GrpcClientForTenderService/internal/protos/gen/tender/fetch"
+	"GrpcClientForTenderService/internal/redis"
 	bidsUseCaseFetch "GrpcClientForTenderService/internal/usecases/bids/fetch"
 	tenderUseCaseFetch "GrpcClientForTenderService/internal/usecases/tender/fetch"
 	"google.golang.org/grpc"
@@ -49,6 +50,11 @@ func main() {
 	}
 	defer func() { _ = conn.Close() }()
 
+	// <! Redis client
+	redisClient := redis.NewRedisClient(cfg)
+	defer func() { _ = redisClient.Close() }()
+	// Redis client !>
+
 	// <! ProtoService Bids
 	bidsFetchService := bidsProto.NewBidsServiceFetchClient(conn)
 	// ProtoService Bids !>
@@ -74,7 +80,7 @@ func main() {
 	// Gateway tender  !>
 
 	// <! UseCase tender
-	tenderFetchUseCase := tenderUseCaseFetch.NewService(tenderFetchGateway)
+	tenderFetchUseCase := tenderUseCaseFetch.NewService(log, tenderFetchGateway, redisClient)
 	// Gateway tender  !>
 
 	// <! Handler Tender
@@ -90,13 +96,15 @@ func main() {
 	kafkaRouter := kafka.NewRouterKafka(log)
 
 	kafkaRouter.RegisterHandler("tender_created", &handlerTenderFetch)
+	kafkaRouter.RegisterHandler("tender_published", &handlerTenderFetch)
 	kafkaRouter.RegisterHandler("bids_created", &handlerBidsFetch)
+
 	msgChan := make(chan []byte, 1000)
 
 	consumer, err := kafka.NewConsumer(
 		log,
-		[]string{"localhost:29092"},
-		"model-events",
+		[]string{cfg.Kafka.Address},
+		cfg.Kafka.DefaultTopic,
 		msgChan,
 	)
 	if err != nil {
@@ -123,10 +131,10 @@ func main() {
 }
 
 func StartServerHttp(ctx context.Context, cfg *config.Config, log *slog.Logger, router http.Handler) {
-	log.Info("http server starting", slog.String("address", cfg.Address))
+	log.Info("http server starting", slog.String("address", cfg.HTTPServer.Address))
 
 	srv := &http.Server{
-		Addr:         cfg.Address,
+		Addr:         cfg.HTTPServer.Address,
 		Handler:      router,
 		ReadTimeout:  cfg.Timeout,
 		WriteTimeout: cfg.Timeout,
