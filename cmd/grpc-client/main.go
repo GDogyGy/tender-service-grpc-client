@@ -88,7 +88,7 @@ func main() {
 
 	// <! Kafka consumer & router
 	kafkaRouter := kafka.NewRouterKafka(log)
-	// TODO: если тендер апрувнули то вычитать все тендер
+
 	kafkaRouter.RegisterHandler("tender_created", &handlerTenderFetch)
 	kafkaRouter.RegisterHandler("bids_created", &handlerBidsFetch)
 	msgChan := make(chan []byte, 1000)
